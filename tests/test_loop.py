@@ -3,6 +3,7 @@ import json
 from agent.loop import AgentLoop
 from agent.providers import ProviderError, Response, ToolCall
 from agent.providers.fake import FakeProvider
+from agent.workspace import Workspace
 from agent.tools import ToolContext, build_tools
 
 
@@ -13,7 +14,7 @@ def call(name, args, id="c1", raw=None):
 def make(tmp_path, script, max_steps=25):
     events = []
     provider = FakeProvider(script)
-    loop = AgentLoop(provider, build_tools(), ToolContext(tmp_path), max_steps,
+    loop = AgentLoop(provider, build_tools(), ToolContext(Workspace.validate(str(tmp_path))), max_steps,
                      lambda k, t: events.append((k, t)))
     return loop, provider, events
 
@@ -83,7 +84,7 @@ def test_interrupt(tmp_path):
     class Boom(FakeProvider):
         def complete(self, messages, tools):
             raise KeyboardInterrupt
-    loop = AgentLoop(Boom([]), build_tools(), ToolContext(tmp_path), 5, lambda k, t: None)
+    loop = AgentLoop(Boom([]), build_tools(), ToolContext(Workspace.validate(str(tmp_path))), 5, lambda k, t: None)
     assert loop.run_task("go").outcome == "interrupted"
 
 
@@ -99,7 +100,7 @@ def test_gate_interim_modes(tmp_path):
     def confirm(prompt):
         asked.append(prompt)
         return next(answers)
-    loop = AgentLoop(provider, build_tools(), ToolContext(tmp_path), 10, lambda k, t: None, confirm)
+    loop = AgentLoop(provider, build_tools(), ToolContext(Workspace.validate(str(tmp_path))), 10, lambda k, t: None, confirm)
     loop.run_task("go")
     assert not (tmp_path / "a.txt").exists() and (tmp_path / "b.txt").read_text() == "y"
     assert len(asked) == 2
@@ -122,7 +123,7 @@ def test_integration_package_and_pytest(tmp_path):
                                   id="5")]),
         Response(text="all done"),
     ])
-    loop = AgentLoop(provider, build_tools(), ToolContext(tmp_path), 10, lambda k, t: None,
+    loop = AgentLoop(provider, build_tools(), ToolContext(Workspace.validate(str(tmp_path))), 10, lambda k, t: None,
                      lambda p: "always")
     result = loop.run_task("make a package")
     assert result.outcome == "done"

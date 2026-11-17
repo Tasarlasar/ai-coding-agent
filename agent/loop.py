@@ -7,6 +7,7 @@ from typing import Callable
 
 from agent.prompts import SYSTEM_PROMPT
 from agent.providers import Provider, ProviderError
+from agent.workspace import WorkspaceError
 from agent.tools import Tool, ToolContext, ToolResult, validate_args
 
 
@@ -82,6 +83,15 @@ class AgentLoop:
             } for tc in resp.tool_calls]
         return msg
 
+    def _display_target(self, args: dict) -> str:
+        path = args.get("path")
+        if isinstance(path, str) and path:
+            try:
+                return self.ctx.workspace.rel(self.ctx.workspace.resolve(path))
+            except WorkspaceError:
+                return path
+        return str(args.get("command", ""))[:60]
+
     def _gate(self, tool: Tool, args: dict) -> tuple[bool, str]:
         """Interim hard-coded permissions: read allow, everything else ask."""
         if tool.category == "read" or tool.category in self.session_allow:
@@ -104,7 +114,7 @@ class AgentLoop:
         problem = validate_args(tool.schema, call.arguments)
         if problem:
             return ToolResult(False, f"ERROR: bad arguments: {problem}")
-        target = call.arguments.get("path") or str(call.arguments.get("command", ""))[:60]
+        target = self._display_target(call.arguments)
         self.emit("tool", f"-> {call.name} {target}".rstrip())
         allowed, message = self._gate(tool, call.arguments)
         if not allowed:

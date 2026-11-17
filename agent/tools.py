@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent import secrets
+from agent.workspace import Workspace, WorkspaceError
 
 MAX_FILE_BYTES = 1_000_000
 MAX_REASON = 200
@@ -26,8 +27,12 @@ class ToolResult:
 
 @dataclass
 class ToolContext:
-    workspace_root: Path
+    workspace: Workspace
     settings: Any = None
+
+    @property
+    def root(self) -> Path:
+        return self.workspace.root
 
     def setting(self, name: str, default):
         return getattr(self.settings, name, default)
@@ -66,9 +71,25 @@ def validate_args(schema: dict, args: dict) -> str | None:
     return None
 
 
-def _resolve_in_root(root: Path, p: str) -> Path:
-    """Interim resolver (slice 3 replaces it with Workspace.resolve)."""
-    return Path(os.path.realpath(root / p))
+class _ToolFail(Exception):
+    def __init__(self, message: str):
+        self.message = message
+
+
+def _resolve(ctx: ToolContext, p: str) -> Path:
+    try:
+        return ctx.workspace.resolve(p)
+    except WorkspaceError:
+        raise _ToolFail(f"path escapes workspace: {p}") from None
+
+
+def _guarded(fn):
+    def run(args: dict, ctx: ToolContext) -> ToolResult:
+        try:
+            return fn(args, ctx)
+        except _ToolFail as exc:
+            return _err(exc.message)
+    return run
 
 
 def is_agent_dir_path(root: Path, real: Path) -> bool:
@@ -100,7 +121,7 @@ def _head_tail(text: str, limit: int) -> str:
 
 
 def _read_file(args: dict, ctx: ToolContext) -> ToolResult:
-    path = _resolve_in_root(ctx.workspace_root, args["path"])
+    path = _resolve(ctx, args["path"])
     if not path.is_file():
         return _err(f"not a file: {args['path']}")
     start, end = args.get("start_line"), args.get("end_line")
@@ -130,8 +151,8 @@ def _cap_reason(args: dict) -> str | None:
 
 
 def _write_file(args: dict, ctx: ToolContext) -> ToolResult:
-    root = ctx.workspace_root
-    path = _resolve_in_root(root, args["path"])
+    root = ctx.root
+    path = _resolve(ctx, args["path"])
     if is_agent_dir_path(root, path):
         return _err("paths under .agent/ are reserved for the agent runtime")
     if path.is_dir():
@@ -146,8 +167,8 @@ def _write_file(args: dict, ctx: ToolContext) -> ToolResult:
 
 
 def _edit_file(args: dict, ctx: ToolContext) -> ToolResult:
-    root = ctx.workspace_root
-    path = _resolve_in_root(root, args["path"])
+    root = ctx.root
+    path = _resolve(ctx, args["path"])
     if is_agent_dir_path(root, path):
         return _err("paths under .agent/ are reserved for the agent runtime")
     old, new = args["old_text"], args["new_text"]
@@ -170,8 +191,8 @@ def _edit_file(args: dict, ctx: ToolContext) -> ToolResult:
 
 
 def _list_dir(args: dict, ctx: ToolContext) -> ToolResult:
-    root = ctx.workspace_root
-    path = _resolve_in_root(root, args.get("path", "."))
+    root = ctx.root
+    path = _resolve(ctx, args.get("path", "."))
     if not path.is_dir():
         return _err(f"not a directory: {args.get('path', '.')}")
     entries = []
@@ -186,12 +207,12 @@ def _list_dir(args: dict, ctx: ToolContext) -> ToolResult:
 
 
 def _search(args: dict, ctx: ToolContext) -> ToolResult:
-    root = ctx.workspace_root
+    root = ctx.root
     try:
         regex = re.compile(args["pattern"])
     except re.error as exc:
         return _err(f"invalid regex: {exc}")
-    start = _resolve_in_root(root, args.get("path", "."))
+    start = _resolve(ctx, args.get("path", "."))
     glob = args.get("glob")
     if start.is_file():
         candidates = [start]
@@ -207,10 +228,8 @@ def _search(args: dict, ctx: ToolContext) -> ToolResult:
     matches: list[str] = []
     for file in candidates:
         try:
-            real = _resolve_in_root(root, str(file))
-            if not (real == root or root in real.parents):
-                continue
-        except OSError:
+            real = ctx.workspace.resolve(str(file))
+        except WorkspaceError:
             continue
         rel = file.relative_to(root).as_posix() if root in file.parents else file.name
         if glob and not fnmatch.fnmatch(rel, glob):
@@ -238,7 +257,7 @@ def _run_shell(args: dict, ctx: ToolContext) -> ToolResult:
     env = {k: v for k, v in os.environ.items() if not secrets.secret_name(k)}
     posix = sys.platform != "win32"
     proc = subprocess.Popen(
-        args["command"], shell=True, cwd=ctx.workspace_root, stdin=subprocess.DEVNULL,
+        args["command"], shell=True, cwd=ctx.root, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
         env=env, start_new_session=posix)
     try:
@@ -303,4 +322,6 @@ def build_tools() -> dict[str, Tool]:
              "timeout": {"type": "integer", "description": "Timeout in seconds"}},
             ["command"]), _run_shell),
     ]
+    for t in tools:
+        t.run = _guarded(t.run)
     return {t.name: t for t in tools}
