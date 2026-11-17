@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent import secrets
+from agent.context import truncate_output
 from agent.workspace import Workspace, WorkspaceError
 
 MAX_FILE_BYTES = 1_000_000
@@ -112,14 +113,6 @@ def is_agent_dir_path(root: Path, real: Path) -> bool:
     return False
 
 
-def _head_tail(text: str, limit: int) -> str:
-    """Interim truncation (slice 5 replaces it with context.truncate_output)."""
-    if len(text) <= limit:
-        return text
-    h = int(limit * 0.6)
-    return f"{text[:h]}\n... [omitted {len(text) - limit} chars of {len(text)} total] ...\n{text[len(text) - (limit - h):]}"
-
-
 def _read_file(args: dict, ctx: ToolContext) -> ToolResult:
     path = _resolve(ctx, args["path"])
     if not path.is_file():
@@ -141,7 +134,7 @@ def _read_file(args: dict, ctx: ToolContext) -> ToolResult:
     out = "\n".join(f"{n}\t{lines[n - 1]}" for n in range(first, last + 1))
     limit = ctx.setting("output_limit_chars", 8000)
     if len(out) > limit:
-        out = _head_tail(out, limit) + "\nuse start_line/end_line to read the omitted part"
+        out = truncate_output(out, limit) + "\nuse start_line/end_line to read the omitted part"
     return ToolResult(True, out)
 
 
@@ -272,9 +265,9 @@ def _run_shell(args: dict, ctx: ToolContext) -> ToolResult:
             pass
         out, err = proc.communicate()
         return ToolResult(False, f"ERROR: command timed out after {timeout}s\n"
-                          f"stdout:\n{_head_tail(out or '', limit)}\nstderr:\n{_head_tail(err or '', limit)}")
-    return ToolResult(True, f"exit_code: {proc.returncode}\nstdout:\n{_head_tail(out or '', limit)}"
-                      f"\nstderr:\n{_head_tail(err or '', limit)}")
+                          f"stdout:\n{truncate_output(out or '', limit)}\nstderr:\n{truncate_output(err or '', limit)}")
+    return ToolResult(True, f"exit_code: {proc.returncode}\nstdout:\n{truncate_output(out or '', limit)}"
+                      f"\nstderr:\n{truncate_output(err or '', limit)}")
 
 
 _REASON = {"type": "string", "description": "one short sentence: why this change"}

@@ -7,6 +7,7 @@ from typing import Callable
 from agent.prompts import SYSTEM_PROMPT
 from agent.providers import Provider, ProviderError
 from agent.config import Settings
+from agent.context import ContextManager
 from agent.permissions import PermissionGate
 from agent.workspace import Workspace, WorkspaceError
 from agent.tools import Tool, ToolContext, ToolResult, validate_args
@@ -21,31 +22,34 @@ class TaskResult:
 
 class AgentLoop:
     def __init__(self, provider: Provider, tools: dict[str, Tool], workspace: Workspace,
-                 settings: Settings, gate: PermissionGate, emit: Callable[[str, str], None]):
+                 settings: Settings, gate: PermissionGate, context: ContextManager,
+                 emit: Callable[[str, str], None],
+                 project_summary: Callable[[], str] | None = None):
         self.provider = provider
         self.tools = tools
         self.workspace = workspace
         self.ctx = ToolContext(workspace, settings)
         self.max_steps = settings.max_steps
         self.gate = gate
+        self.context = context
+        self.project_summary = project_summary or self._default_summary
         self.emit = emit
         self.schemas = [t.schema for t in tools.values()]
 
     def run_task(self, request: str) -> TaskResult:
-        messages: list[dict] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": request},
-        ]
+        messages = self.context.start_task(SYSTEM_PROMPT, self.project_summary(), request)
         outcome, final_text, steps = "step_limit", None, 0
         pending: list = []
         try:
             for steps in range(1, self.max_steps + 1):
+                messages = self.context.prepare(messages)
                 try:
                     resp = self.provider.complete(messages, self.schemas)
                 except ProviderError as exc:
                     self.emit("error", str(exc))
                     outcome = "provider_error"
                     break
+                self.context.note_usage(resp.usage_total_tokens)
                 messages.append(self._assistant_message(resp))
                 if resp.text:
                     self.emit("assistant", resp.text)
@@ -58,19 +62,20 @@ class AgentLoop:
                     result = self._execute(call)
                     pending.pop(0)
                     self.emit("result", "ok" if result.ok else result.content[:100])
-                    messages.append({"role": "tool", "tool_call_id": call.id,
-                                     "content": result.content})
+                    self.context.add_tool_result(messages, call.id, result.content)
             else:
                 self.emit("error", f"stopped after {self.max_steps} steps")
         except KeyboardInterrupt:
             for call in pending:
-                messages.append({"role": "tool", "tool_call_id": call.id,
-                                 "content": "ERROR: interrupted by user"})
+                self.context.add_tool_result(messages, call.id, "ERROR: interrupted by user")
             outcome = "interrupted"
         except Exception:  # noqa: BLE001
             self.emit("error", "internal error")
             outcome = "internal_error"
         return TaskResult(outcome, final_text, steps)
+
+    def _default_summary(self) -> str:
+        return f"Workspace: {self.workspace.root.name}\n" + "\n".join(self.workspace.top_entries())
 
     @staticmethod
     def _assistant_message(resp) -> dict:

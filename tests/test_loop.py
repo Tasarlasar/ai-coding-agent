@@ -1,5 +1,6 @@
 import json
 
+from agent.context import ContextManager
 from agent.loop import AgentLoop
 from agent.providers import ProviderError, Response, ToolCall
 from agent.providers.fake import FakeProvider
@@ -23,7 +24,8 @@ def make(tmp_path, script, max_steps=25, perms=None, confirm=None, session_allow
     ws = Workspace.validate(str(tmp_path))
     gate = PermissionGate(settings, confirm or (lambda p: "no"),
                           session_allow if session_allow is not None else set(), ws)
-    loop = AgentLoop(provider, build_tools(), ws, settings, gate, lambda k, t: events.append((k, t)))
+    context = ContextManager(provider, settings)
+    loop = AgentLoop(provider, build_tools(), ws, settings, gate, context, lambda k, t: events.append((k, t)))
     return loop, provider, events
 
 
@@ -165,3 +167,23 @@ def test_integration_package_and_pytest(tmp_path):
     assert result.outcome == "done"
     shell_result = [m for m in provider.calls[3] if m["role"] == "tool"][-1]["content"]
     assert "exit_code: 0" in shell_result and "1 passed" in shell_result
+
+
+def test_loop_truncates_and_stubs_through_context(tmp_path):
+    (tmp_path / "big.txt").write_text("line\n" * 5000)
+    script = [Response(tool_calls=[call("read_file", {"path": "big.txt"}, id=f"c{i}")]) for i in range(5)]
+    script.append(Response(text="done"))
+    loop, provider, _ = make(tmp_path, script)
+    assert loop.run_task("read").outcome == "done"
+    first_result = [m for m in provider.calls[1] if m["role"] == "tool"][0]["content"]
+    assert "omitted" in first_result and "use start_line/end_line" in first_result
+    last_call = provider.calls[-1]
+    assert any(m["role"] == "tool" and m["content"].startswith("[old read_file result omitted") for m in last_call)
+
+
+def test_second_task_does_not_see_first(tmp_path):
+    loop, provider, _ = make(tmp_path, [Response(text="a"), Response(text="b")])
+    loop.run_task("FIRST-REQUEST")
+    loop.run_task("second")
+    assert "FIRST-REQUEST" not in json.dumps(provider.calls[1])
+    assert "Project summary:" in provider.calls[1][1]["content"]

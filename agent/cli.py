@@ -9,6 +9,7 @@ from typing import Callable
 
 from agent import config
 from agent.config import CATEGORIES, MODES, UNSET, ConfigError, LoadedSettings
+from agent.context import ContextManager
 from agent.loop import AgentLoop
 from agent.permissions import PermissionGate
 from agent.providers.litellm_provider import LiteLLMProvider
@@ -129,7 +130,8 @@ def _run_task(session: Session, request: str) -> None:
         return
     provider = LiteLLMProvider(settings.model, api_key, settings.api_base)
     gate = PermissionGate(settings, _confirm, session.session_allow, session.workspace)
-    loop = AgentLoop(provider, build_tools(), session.workspace, settings, gate, _emit)
+    context = ContextManager(provider, settings, lambda msg: _emit("warning", msg))
+    loop = AgentLoop(provider, build_tools(), session.workspace, settings, gate, context, _emit)
     try:
         loop.run_task(request)
     except KeyboardInterrupt:

@@ -45,3 +45,12 @@ class Workspace:
         if real == self.root:
             return "."
         return real.relative_to(self.root).as_posix()
+
+    def top_entries(self, limit: int = 30) -> list[str]:
+        skip = {".git", ".agent", ".venv", "node_modules", "__pycache__"}
+        try:
+            children = sorted(self.root.iterdir(), key=lambda c: c.name)
+        except OSError:
+            return []
+        names = [c.name + ("/" if c.is_dir() else "") for c in children if c.name not in skip]
+        return names[:limit]
