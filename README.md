@@ -39,3 +39,19 @@ See `docs/security.md` for what the permissions do and do not protect.
 ```
 .venv/bin/python -m pytest -q
 ```
+
+## Change log
+
+Each task appends to `<workspace>/.agent/changelog.log`. The runtime writes it, with no extra model call, and it is not sent to the model unless the model reads it.
+
+```
+# task 2025-01-15T10:32:00 | Add a CLI entry point
+2025-01-15T10:32:05 | write | src/app.py | Create entry point with main()
+2025-01-15T10:33:10 | edit | src/app.py | Fix off-by-one in loop
+#> Task done: 2 change(s)
+#>   src/app.py: Fix off-by-one in loop
+#> verify: 1 shell run(s), last exit 0
+# end 2025-01-15T10:32:00 done | 2 changes
+```
+
+Only successful writes and edits get a line (path, and the one-sentence reason the model gave, or `(none given)`). Reads and shell commands are never logged, and shell command text never reaches the file. The terminal shows a summary of at most 15 lines at the end of each task, including the shell commands that ran and their exit codes. The next task starts with fresh context plus a short project summary built from this log.

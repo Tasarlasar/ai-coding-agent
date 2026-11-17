@@ -1,11 +1,13 @@
 """The agent loop: model call, tool calls, results, repeat."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable
 
 from agent.prompts import SYSTEM_PROMPT
 from agent.providers import Provider, ProviderError
+from agent.changelog import ChangeLog
 from agent.config import Settings
 from agent.context import ContextManager
 from agent.permissions import PermissionGate
@@ -23,8 +25,7 @@ class TaskResult:
 class AgentLoop:
     def __init__(self, provider: Provider, tools: dict[str, Tool], workspace: Workspace,
                  settings: Settings, gate: PermissionGate, context: ContextManager,
-                 emit: Callable[[str, str], None],
-                 project_summary: Callable[[], str] | None = None):
+                 changelog: ChangeLog, emit: Callable[[str, str], None]):
         self.provider = provider
         self.tools = tools
         self.workspace = workspace
@@ -32,12 +33,15 @@ class AgentLoop:
         self.max_steps = settings.max_steps
         self.gate = gate
         self.context = context
-        self.project_summary = project_summary or self._default_summary
+        self.changelog = changelog
+        self._log_warned = False
         self.emit = emit
         self.schemas = [t.schema for t in tools.values()]
 
     def run_task(self, request: str) -> TaskResult:
-        messages = self.context.start_task(SYSTEM_PROMPT, self.project_summary(), request)
+        summary = self.changelog.project_summary()  # before begin_task, so it excludes this task
+        self.changelog.begin_task(request)
+        messages = self.context.start_task(SYSTEM_PROMPT, summary, request)
         outcome, final_text, steps = "step_limit", None, 0
         pending: list = []
         try:
@@ -72,10 +76,17 @@ class AgentLoop:
         except Exception:  # noqa: BLE001
             self.emit("error", "internal error")
             outcome = "internal_error"
+        finally:
+            for line in self.changelog.end_task(final_text, outcome):
+                self.emit("info", line)
+            self._warn_log_error()
         return TaskResult(outcome, final_text, steps)
 
-    def _default_summary(self) -> str:
-        return f"Workspace: {self.workspace.root.name}\n" + "\n".join(self.workspace.top_entries())
+    def _warn_log_error(self) -> None:
+        error = self.changelog.pop_error()
+        if error and not self._log_warned:
+            self._log_warned = True
+            self.emit("warning", error)
 
     @staticmethod
     def _assistant_message(resp) -> dict:
@@ -112,6 +123,19 @@ class AgentLoop:
         if not allowed:
             return ToolResult(False, message)
         try:
-            return tool.run(call.arguments, self.ctx)
+            result = tool.run(call.arguments, self.ctx)
         except Exception as exc:  # noqa: BLE001
             return ToolResult(False, f"ERROR: {type(exc).__name__}: {exc}")
+        self._log(tool, call.arguments, result)
+        return result
+
+    def _log(self, tool: Tool, args: dict, result: ToolResult) -> None:
+        """Feed the change log. Only successful write/edit calls are logged; shell text never is."""
+        if tool.category in ("write", "edit") and result.ok:
+            rel = self.workspace.rel(self.workspace.resolve(args["path"]))
+            self.changelog.record(tool.category, rel, args.get("reason"))
+        elif tool.category == "shell":
+            match = re.match(r"exit_code: (-?\d+)", result.content)
+            self.changelog.record_verification(str(args.get("command", "")),
+                                               int(match.group(1)) if match and result.ok else -1)
+        self._warn_log_error()

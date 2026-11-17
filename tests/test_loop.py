@@ -1,10 +1,13 @@
 import json
 
+import pytest
+
 from agent.context import ContextManager
 from agent.loop import AgentLoop
 from agent.providers import ProviderError, Response, ToolCall
 from agent.providers.fake import FakeProvider
 from agent import config
+from agent.changelog import ChangeLog
 from agent.permissions import PermissionGate
 from agent.tools import build_tools
 from agent.workspace import Workspace
@@ -25,7 +28,7 @@ def make(tmp_path, script, max_steps=25, perms=None, confirm=None, session_allow
     gate = PermissionGate(settings, confirm or (lambda p: "no"),
                           session_allow if session_allow is not None else set(), ws)
     context = ContextManager(provider, settings)
-    loop = AgentLoop(provider, build_tools(), ws, settings, gate, context, lambda k, t: events.append((k, t)))
+    loop = AgentLoop(provider, build_tools(), ws, settings, gate, context, ChangeLog(ws), lambda k, t: events.append((k, t)))
     return loop, provider, events
 
 
@@ -182,8 +185,71 @@ def test_loop_truncates_and_stubs_through_context(tmp_path):
 
 
 def test_second_task_does_not_see_first(tmp_path):
-    loop, provider, _ = make(tmp_path, [Response(text="a"), Response(text="b")])
-    loop.run_task("FIRST-REQUEST")
+    loop, provider, _ = make(tmp_path, [Response(text="FIRST-REPLY"), Response(text="b")])
+    loop.run_task("first")
     loop.run_task("second")
-    assert "FIRST-REQUEST" not in json.dumps(provider.calls[1])
+    assert "FIRST-REPLY" not in json.dumps(provider.calls[1])
     assert "Project summary:" in provider.calls[1][1]["content"]
+
+
+def test_absolute_path_logged_relative_and_failed_edit_not_logged(tmp_path):
+    (tmp_path / "e.txt").write_text("hello")
+    loop, provider, events = make(tmp_path, [
+        Response(tool_calls=[
+            call("write_file", {"path": str(tmp_path / "pkg" / "a.py"), "content": "x", "reason": "make a"}, id="1"),
+            call("edit_file", {"path": "e.txt", "old_text": "nope", "new_text": "x", "reason": "bad"}, id="2"),
+            call("edit_file", {"path": "e.txt", "old_text": "hello", "new_text": "bye"}, id="3"),
+            call("read_file", {"path": "e.txt"}, id="4"),
+            call("run_shell", {"command": "echo sk-SECRET-token"}, id="5")]),
+        Response(text="done")], perms={"write": "allow", "edit": "allow", "shell": "allow"})
+    loop.run_task("do things")
+    text = (tmp_path / ".agent" / "changelog.log").read_text()
+    entries = [line.split(" | ") for line in text.splitlines() if not line.startswith("#")]
+    assert [e[1:] for e in entries] == [["write", "pkg/a.py", "make a"], ["edit", "e.txt", "(none given)"]]
+    assert "sk-SECRET" not in text and "echo" not in text
+    assert any(k == "info" and "verify: echo sk-SECRET-token -> exit 0" in t for k, t in events)
+
+
+@pytest.mark.parametrize("script,outcome", [
+    ([Response(tool_calls=[call("read_file", {"path": "x"}, id="a")])] * 2, "step_limit"),
+    ([ProviderError("boom")], "provider_error"),
+])
+def test_end_task_runs_for_every_outcome(tmp_path, script, outcome):
+    loop, _, events = make(tmp_path, list(script), max_steps=2)
+    assert loop.run_task("t").outcome == outcome
+    lines = (tmp_path / ".agent" / "changelog.log").read_text().splitlines()
+    assert lines[-1].startswith("# end ") and f" {outcome} " in lines[-1]
+    assert events[-1][0] == "info" and f"Task {outcome}" in events[-1][1]
+
+
+def test_end_task_runs_on_interrupt(tmp_path):
+    class Boom(FakeProvider):
+        def complete(self, messages, tools):
+            raise KeyboardInterrupt
+    loop, _, _ = make(tmp_path, [], provider=Boom([]))
+    assert loop.run_task("t").outcome == "interrupted"
+    assert " interrupted " in (tmp_path / ".agent" / "changelog.log").read_text().splitlines()[-1]
+
+
+def test_no_extra_provider_call_for_logging(tmp_path):
+    loop, provider, _ = make(tmp_path, [
+        Response(tool_calls=[call("write_file", {"path": "a.txt", "content": "x"})]), Response(text="done")],
+        perms={"write": "allow"})
+    loop.run_task("t")
+    assert len(provider.calls) == 2 and not provider.script
+
+
+def test_log_failure_warns_once_and_task_continues(tmp_path):
+    (tmp_path / ".agent").write_text("blocker")
+    loop, _, events = make(tmp_path, [
+        Response(tool_calls=[call("write_file", {"path": "a.txt", "content": "x"})]), Response(text="done")],
+        perms={"write": "allow"})
+    assert loop.run_task("t").outcome == "done" and (tmp_path / "a.txt").exists()
+    assert sum(1 for k, _ in events if k == "warning") == 1
+
+
+def test_second_task_summary_lists_first(tmp_path):
+    loop, provider, _ = make(tmp_path, [Response(text="a"), Response(text="b")])
+    loop.run_task("first request")
+    loop.run_task("second")
+    assert "first request (done)" in provider.calls[1][1]["content"]
