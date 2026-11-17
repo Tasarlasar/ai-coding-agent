@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-cli"
+version = "0.1.0"
+description = "A personal AI coding agent CLI (bring your own API key, any model)"
+requires-python = ">=3.10"
+dependencies = ["litellm>=1.109.1,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+agent = "agent.cli:main"
+
+[tool.setuptools]
+packages = ["agent", "agent.providers"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
