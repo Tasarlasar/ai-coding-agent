@@ -92,6 +92,25 @@ def test_edit_errors_leave_file_unchanged(ctx, old, msg):
     assert f.read_bytes() == b"a a\na\n"
 
 
+def test_edit_refuses_non_utf8_and_binary(ctx):
+    latin = ctx.root / "l.txt"
+    latin.write_bytes(b"caf\xe9 = 1\nx = 2\n")
+    r = run(ctx, "edit_file", path="l.txt", old_text="x = 2", new_text="x = 3")
+    assert not r.ok and "UTF-8" in r.content
+    assert latin.read_bytes() == b"caf\xe9 = 1\nx = 2\n"
+    binf = ctx.root / "b.bin"
+    binf.write_bytes(b"ab\0cd")
+    assert not run(ctx, "edit_file", path="b.bin", old_text="ab", new_text="x").ok
+    assert binf.read_bytes() == b"ab\0cd"
+
+
+def test_edit_utf8_multibyte_preserved(ctx):
+    f = ctx.root / "u.txt"
+    f.write_bytes("caf\u00e9 a\n".encode())
+    assert run(ctx, "edit_file", path="u.txt", old_text=" a", new_text=" b").ok
+    assert f.read_bytes() == "caf\u00e9 b\n".encode()
+
+
 def test_edit_missing_file_and_agent_dir(ctx):
     assert not run(ctx, "edit_file", path="nope", old_text="a", new_text="b").ok
     (ctx.root / ".agent").mkdir()
@@ -165,6 +184,37 @@ def test_shell_env_stripped(ctx, monkeypatch):
     r = run(ctx, "run_shell", command=py("import os;print(sorted(os.environ))"))
     assert "HOME" in r.content
     assert "AWS_SECRET_ACCESS_KEY" not in r.content and "OPENAI_API_KEY" not in r.content
+
+
+def test_shell_huge_output_bounded(ctx):
+    ctx.settings = type("S", (), {"output_limit_chars": 500, "shell_timeout_s": 60})()
+    r = run(ctx, "run_shell", command=py("import sys;sys.stdout.write('y'*5_000_000)"))
+    assert r.ok and "omitted" in r.content and len(r.content) < 1500
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="posix process groups")
+def test_shell_interrupt_kills_group(ctx, monkeypatch):
+    import subprocess
+    pidfile = ctx.root / "pid2"
+    code = f"import os,time;open(r'{pidfile}','w').write(str(os.getpid()));time.sleep(60)"
+    orig = subprocess.Popen.wait
+
+    def fake_wait(self, timeout=None):
+        if timeout is not None:
+            for _ in range(100):
+                if pidfile.exists() and pidfile.read_text():
+                    break
+                time.sleep(0.05)
+            raise KeyboardInterrupt
+        return orig(self)
+
+    monkeypatch.setattr(subprocess.Popen, "wait", fake_wait)
+    with pytest.raises(KeyboardInterrupt):
+        run(ctx, "run_shell", command=py(code))
+    pid = int(pidfile.read_text())
+    time.sleep(0.3)
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="posix process groups")

@@ -7,6 +7,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -169,8 +170,13 @@ def _edit_file(args: dict, ctx: ToolContext) -> ToolResult:
         return _err("old_text must not be empty")
     if not path.is_file():
         return _err(f"file not found: {args['path']}")
-    with open(path, "r", encoding="utf-8", errors="replace", newline="") as f:
-        text = f.read()
+    raw = path.read_bytes()
+    if b"\0" in raw[:8192]:
+        return _err(f"binary file refused: {args['path']}")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return _err(f"file is not valid UTF-8, refusing to edit: {args['path']}")
     count = text.count(old)
     if count == 0:
         return _err(f"old_text not found in {args['path']}. Re-read the file and copy the text exactly.")
@@ -251,11 +257,10 @@ def _run_shell(args: dict, ctx: ToolContext) -> ToolResult:
     posix = sys.platform != "win32"
     proc = subprocess.Popen(
         args["command"], shell=True, cwd=ctx.root, stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env=env, start_new_session=posix)
-    try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+
+    def kill_group() -> None:
         try:
             if posix:
                 os.killpg(proc.pid, signal.SIGKILL)
@@ -263,11 +268,63 @@ def _run_shell(args: dict, ctx: ToolContext) -> ToolResult:
                 proc.kill()
         except ProcessLookupError:
             pass
-        out, err = proc.communicate()
+
+    keep = max(limit, 1) * 4
+    bufs = [_BoundedBuffer(keep), _BoundedBuffer(keep)]
+    threads = [threading.Thread(target=b.drain, args=(pipe,), daemon=True)
+               for b, pipe in zip(bufs, (proc.stdout, proc.stderr))]
+    for t in threads:
+        t.start()
+    timed_out = False
+    try:
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            kill_group()
+            proc.wait()
+    except BaseException:
+        # Ctrl-C does not reach the child (own session), so kill the group here.
+        kill_group()
+        proc.wait()
+        raise
+    for t in threads:
+        t.join(timeout=2)
+    out, err = bufs[0].text(), bufs[1].text()
+    if timed_out:
         return ToolResult(False, f"ERROR: command timed out after {timeout}s\n"
-                          f"stdout:\n{truncate_output(out or '', limit)}\nstderr:\n{truncate_output(err or '', limit)}")
-    return ToolResult(True, f"exit_code: {proc.returncode}\nstdout:\n{truncate_output(out or '', limit)}"
-                      f"\nstderr:\n{truncate_output(err or '', limit)}")
+                          f"stdout:\n{truncate_output(out, limit)}\nstderr:\n{truncate_output(err, limit)}")
+    return ToolResult(True, f"exit_code: {proc.returncode}\nstdout:\n{truncate_output(out, limit)}"
+                      f"\nstderr:\n{truncate_output(err, limit)}")
+
+
+class _BoundedBuffer:
+    """Drains a pipe, keeping only the first and last `keep` bytes so memory stays bounded."""
+
+    def __init__(self, keep: int) -> None:
+        self.keep = keep
+        self.head = b""
+        self.tail = b""
+        self.dropped = 0
+
+    def drain(self, pipe) -> None:
+        try:
+            while chunk := pipe.read1(65536):
+                room = self.keep - len(self.head)
+                if room > 0:
+                    self.head += chunk[:room]
+                    chunk = chunk[room:]
+                if chunk:
+                    self.tail += chunk
+                    if len(self.tail) > self.keep:
+                        self.dropped += len(self.tail) - self.keep
+                        self.tail = self.tail[-self.keep:]
+        except (OSError, ValueError):
+            pass
+
+    def text(self) -> str:
+        mid = f"\n... [{self.dropped} bytes dropped] ...\n".encode() if self.dropped else b""
+        return (self.head + mid + self.tail).decode("utf-8", errors="replace")
 
 
 _REASON = {"type": "string", "description": "one short sentence: why this change"}
