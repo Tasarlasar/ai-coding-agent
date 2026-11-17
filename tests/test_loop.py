@@ -85,3 +85,46 @@ def test_interrupt(tmp_path):
             raise KeyboardInterrupt
     loop = AgentLoop(Boom([]), build_tools(), ToolContext(tmp_path), 5, lambda k, t: None)
     assert loop.run_task("go").outcome == "interrupted"
+
+
+def test_gate_interim_modes(tmp_path):
+    asked = []
+    provider = FakeProvider([
+        Response(tool_calls=[call("write_file", {"path": "a.txt", "content": "x"}, id="w1")]),
+        Response(tool_calls=[call("write_file", {"path": "b.txt", "content": "y"}, id="w2")]),
+        Response(text="done"),
+    ])
+    answers = iter(["no", "always"])
+
+    def confirm(prompt):
+        asked.append(prompt)
+        return next(answers)
+    loop = AgentLoop(provider, build_tools(), ToolContext(tmp_path), 10, lambda k, t: None, confirm)
+    loop.run_task("go")
+    assert not (tmp_path / "a.txt").exists() and (tmp_path / "b.txt").read_text() == "y"
+    assert len(asked) == 2
+    tool_msgs = [m for m in provider.calls[1] if m["role"] == "tool"]
+    assert tool_msgs[0]["content"] == "ERROR: user declined write_file"
+
+
+def test_integration_package_and_pytest(tmp_path):
+    import sys
+    test_code = "from pkg.calc import add\\n\\ndef test_add():\\n    assert add(1, 2) == 3\\n"
+    provider = FakeProvider([
+        Response(tool_calls=[call("write_file", {"path": "pkg/__init__.py", "content": ""}, id="1"),
+                             call("write_file", {"path": "pkg/calc.py",
+                                                 "content": "def add(a, b):\n    return a - b\n"}, id="2"),
+                             call("write_file", {"path": "tests/test_calc.py",
+                                                 "content": test_code.replace("\\n", "\n")}, id="3")]),
+        Response(tool_calls=[call("edit_file", {"path": "pkg/calc.py", "old_text": "a - b",
+                                                "new_text": "a + b"}, id="4")]),
+        Response(tool_calls=[call("run_shell", {"command": f'"{sys.executable}" -m pytest -q -p no:cacheprovider'},
+                                  id="5")]),
+        Response(text="all done"),
+    ])
+    loop = AgentLoop(provider, build_tools(), ToolContext(tmp_path), 10, lambda k, t: None,
+                     lambda p: "always")
+    result = loop.run_task("make a package")
+    assert result.outcome == "done"
+    shell_result = [m for m in provider.calls[3] if m["role"] == "tool"][-1]["content"]
+    assert "exit_code: 0" in shell_result and "1 passed" in shell_result

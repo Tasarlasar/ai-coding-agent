@@ -27,6 +27,7 @@ class AgentLoop:
         self.max_steps = max_steps
         self.emit = emit
         self.confirm = confirm or (lambda prompt: "no")
+        self.session_allow: set[str] = set()
         self.schemas = [t.schema for t in tools.values()]
 
     def run_task(self, request: str) -> TaskResult:
@@ -81,6 +82,19 @@ class AgentLoop:
             } for tc in resp.tool_calls]
         return msg
 
+    def _gate(self, tool: Tool, args: dict) -> tuple[bool, str]:
+        """Interim hard-coded permissions: read allow, everything else ask."""
+        if tool.category == "read" or tool.category in self.session_allow:
+            return True, ""
+        detail = args.get("path") or str(args.get("command", ""))[:200]
+        reason = args.get("reason") or ""
+        answer = self.confirm(f"{tool.name} {detail} {('- ' + reason) if reason else ''}".rstrip())
+        if answer == "always":
+            self.session_allow.add(tool.category)
+        elif answer != "yes":
+            return False, f"ERROR: user declined {tool.name}"
+        return True, ""
+
     def _execute(self, call) -> ToolResult:
         tool = self.tools.get(call.name)
         if tool is None:
@@ -90,7 +104,11 @@ class AgentLoop:
         problem = validate_args(tool.schema, call.arguments)
         if problem:
             return ToolResult(False, f"ERROR: bad arguments: {problem}")
-        self.emit("tool", f"-> {call.name} {call.arguments.get('path', '')}".rstrip())
+        target = call.arguments.get("path") or str(call.arguments.get("command", ""))[:60]
+        self.emit("tool", f"-> {call.name} {target}".rstrip())
+        allowed, message = self._gate(tool, call.arguments)
+        if not allowed:
+            return ToolResult(False, message)
         try:
             return tool.run(call.arguments, self.ctx)
         except Exception as exc:  # noqa: BLE001
