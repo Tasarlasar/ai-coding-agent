@@ -1,13 +1,14 @@
 """The agent loop: model call, tool calls, results, repeat."""
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Callable
 
 from agent.prompts import SYSTEM_PROMPT
 from agent.providers import Provider, ProviderError
-from agent.workspace import WorkspaceError
+from agent.config import Settings
+from agent.permissions import PermissionGate
+from agent.workspace import Workspace, WorkspaceError
 from agent.tools import Tool, ToolContext, ToolResult, validate_args
 
 
@@ -19,16 +20,15 @@ class TaskResult:
 
 
 class AgentLoop:
-    def __init__(self, provider: Provider, tools: dict[str, Tool], ctx: ToolContext,
-                 max_steps: int, emit: Callable[[str, str], None],
-                 confirm: Callable[[str], str] | None = None):
+    def __init__(self, provider: Provider, tools: dict[str, Tool], workspace: Workspace,
+                 settings: Settings, gate: PermissionGate, emit: Callable[[str, str], None]):
         self.provider = provider
         self.tools = tools
-        self.ctx = ctx
-        self.max_steps = max_steps
+        self.workspace = workspace
+        self.ctx = ToolContext(workspace, settings)
+        self.max_steps = settings.max_steps
+        self.gate = gate
         self.emit = emit
-        self.confirm = confirm or (lambda prompt: "no")
-        self.session_allow: set[str] = set()
         self.schemas = [t.schema for t in tools.values()]
 
     def run_task(self, request: str) -> TaskResult:
@@ -87,23 +87,10 @@ class AgentLoop:
         path = args.get("path")
         if isinstance(path, str) and path:
             try:
-                return self.ctx.workspace.rel(self.ctx.workspace.resolve(path))
+                return self.workspace.rel(self.workspace.resolve(path))
             except WorkspaceError:
                 return path
         return str(args.get("command", ""))[:60]
-
-    def _gate(self, tool: Tool, args: dict) -> tuple[bool, str]:
-        """Interim hard-coded permissions: read allow, everything else ask."""
-        if tool.category == "read" or tool.category in self.session_allow:
-            return True, ""
-        detail = args.get("path") or str(args.get("command", ""))[:200]
-        reason = args.get("reason") or ""
-        answer = self.confirm(f"{tool.name} {detail} {('- ' + reason) if reason else ''}".rstrip())
-        if answer == "always":
-            self.session_allow.add(tool.category)
-        elif answer != "yes":
-            return False, f"ERROR: user declined {tool.name}"
-        return True, ""
 
     def _execute(self, call) -> ToolResult:
         tool = self.tools.get(call.name)
@@ -116,7 +103,7 @@ class AgentLoop:
             return ToolResult(False, f"ERROR: bad arguments: {problem}")
         target = self._display_target(call.arguments)
         self.emit("tool", f"-> {call.name} {target}".rstrip())
-        allowed, message = self._gate(tool, call.arguments)
+        allowed, message = self.gate.check(tool, call.arguments)
         if not allowed:
             return ToolResult(False, message)
         try:

@@ -3,19 +3,27 @@ import json
 from agent.loop import AgentLoop
 from agent.providers import ProviderError, Response, ToolCall
 from agent.providers.fake import FakeProvider
+from agent import config
+from agent.permissions import PermissionGate
+from agent.tools import build_tools
 from agent.workspace import Workspace
-from agent.tools import ToolContext, build_tools
 
 
 def call(name, args, id="c1", raw=None):
     return ToolCall(id, name, args, raw if raw is not None else json.dumps(args))
 
 
-def make(tmp_path, script, max_steps=25):
+def make(tmp_path, script, max_steps=25, perms=None, confirm=None, session_allow=None, provider=None):
     events = []
-    provider = FakeProvider(script)
-    loop = AgentLoop(provider, build_tools(), ToolContext(Workspace.validate(str(tmp_path))), max_steps,
-                     lambda k, t: events.append((k, t)))
+    provider = provider or FakeProvider(script)
+    overrides = {"max_steps": max_steps}
+    if perms:
+        overrides["permissions"] = perms
+    settings = config.load_settings(tmp_path, overrides).settings
+    ws = Workspace.validate(str(tmp_path))
+    gate = PermissionGate(settings, confirm or (lambda p: "no"),
+                          session_allow if session_allow is not None else set(), ws)
+    loop = AgentLoop(provider, build_tools(), ws, settings, gate, lambda k, t: events.append((k, t)))
     return loop, provider, events
 
 
@@ -84,28 +92,57 @@ def test_interrupt(tmp_path):
     class Boom(FakeProvider):
         def complete(self, messages, tools):
             raise KeyboardInterrupt
-    loop = AgentLoop(Boom([]), build_tools(), ToolContext(Workspace.validate(str(tmp_path))), 5, lambda k, t: None)
+    loop, _, _ = make(tmp_path, [], provider=Boom([]))
     assert loop.run_task("go").outcome == "interrupted"
 
 
-def test_gate_interim_modes(tmp_path):
+def test_ask_decline_then_always(tmp_path):
     asked = []
-    provider = FakeProvider([
-        Response(tool_calls=[call("write_file", {"path": "a.txt", "content": "x"}, id="w1")]),
-        Response(tool_calls=[call("write_file", {"path": "b.txt", "content": "y"}, id="w2")]),
-        Response(text="done"),
-    ])
     answers = iter(["no", "always"])
 
     def confirm(prompt):
         asked.append(prompt)
         return next(answers)
-    loop = AgentLoop(provider, build_tools(), ToolContext(Workspace.validate(str(tmp_path))), 10, lambda k, t: None, confirm)
+    loop, provider, _ = make(tmp_path, [
+        Response(tool_calls=[call("write_file", {"path": "a.txt", "content": "x"}, id="w1")]),
+        Response(tool_calls=[call("write_file", {"path": "b.txt", "content": "y"}, id="w2"),
+                             call("write_file", {"path": "c.txt", "content": "z"}, id="w3")]),
+        Response(text="done"),
+    ], confirm=confirm)
     loop.run_task("go")
-    assert not (tmp_path / "a.txt").exists() and (tmp_path / "b.txt").read_text() == "y"
+    assert not (tmp_path / "a.txt").exists()
+    assert (tmp_path / "b.txt").read_text() == "y" and (tmp_path / "c.txt").read_text() == "z"
     assert len(asked) == 2
     tool_msgs = [m for m in provider.calls[1] if m["role"] == "tool"]
     assert tool_msgs[0]["content"] == "ERROR: user declined write_file"
+
+
+def test_deny_still_yields_tool_message(tmp_path):
+    loop, provider, _ = make(tmp_path, [
+        Response(tool_calls=[call("write_file", {"path": "a.txt", "content": "x"})]),
+        Response(text="ok")], perms={"write": "deny"})
+    loop.run_task("go")
+    assert not (tmp_path / "a.txt").exists()
+    tool = [m for m in provider.calls[1] if m["role"] == "tool"]
+    assert len(tool) == 1 and "denied by permission settings" in tool[0]["content"]
+
+
+def test_always_grant_survives_second_task_and_settings_reload(tmp_path):
+    shared = set()
+    prompts = []
+
+    def confirm(p):
+        prompts.append(p)
+        return "always"
+    loop1, _, _ = make(tmp_path, [
+        Response(tool_calls=[call("write_file", {"path": "a.txt", "content": "1"})]), Response(text="x")],
+        confirm=confirm, session_allow=shared)
+    loop1.run_task("one")
+    loop2, _, _ = make(tmp_path, [  # fresh settings and gate, same session_allow set (as the CLI does)
+        Response(tool_calls=[call("write_file", {"path": "b.txt", "content": "2"})]), Response(text="x")],
+        confirm=confirm, session_allow=shared)
+    loop2.run_task("two")
+    assert len(prompts) == 1 and (tmp_path / "b.txt").exists()
 
 
 def test_integration_package_and_pytest(tmp_path):
@@ -123,8 +160,7 @@ def test_integration_package_and_pytest(tmp_path):
                                   id="5")]),
         Response(text="all done"),
     ])
-    loop = AgentLoop(provider, build_tools(), ToolContext(Workspace.validate(str(tmp_path))), 10, lambda k, t: None,
-                     lambda p: "always")
+    loop, _, _ = make(tmp_path, None, max_steps=10, confirm=lambda p: "always", provider=provider)
     result = loop.run_task("make a package")
     assert result.outcome == "done"
     shell_result = [m for m in provider.calls[3] if m["role"] == "tool"][-1]["content"]
