@@ -63,6 +63,7 @@ See `docs/security.md` for what the permissions do and do not protect.
 .venv/bin/python -m pytest -q
 ```
 
+An offline end-to-end check with a stub provider is in `.agents/tasks/coding-agent/e2e_check.py` (`.venv/bin/python .agents/tasks/coding-agent/e2e_check.py`).
 ## Change log
 
 Each task appends to `<workspace>/.agent/changelog.log`. The runtime writes it, with no extra model call, and it is not sent to the model unless the model reads it.
