@@ -21,6 +21,29 @@ On start the CLI asks for a workspace directory (required; the last one is offer
 
 Flags: `--workspace`, `--model`, `--max-steps` (default 25), `--api-base` (local models). Flags apply to the current run only.
 
+## Usage
+
+```
+$ .venv/bin/python -m agent --model gpt-4o
+Workspace directory (required): ~/projects/demo
+> create a small Python package with an add function and a test
+```
+
+Each line you type is one task. The agent follows a fixed flow, printed as it happens: understand the request, inspect the workspace, write a short numbered plan, execute with tools, verify by running the tests, then report. Tool calls show as `-> edit_file src/app.py` followed by a one-line result. When a category is set to `ask`, you are prompted `[y/n/a]` (yes, no, always for this session). At the end a change summary of at most 15 lines is printed.
+
+Commands: `/config` (permissions, model, API key), `/workspace` (switch directory), `/help`, `/exit`. Ctrl-C during a task interrupts it and returns to the prompt.
+
+Tools: `read_file`, `write_file`, `edit_file` (exact, unique search and replace), `list_dir`, `search` (regex), `run_shell` (workspace as cwd, 60 s timeout, secret-looking environment variables removed). Output is not token-streamed.
+
+## Manual smoke checklist
+
+These need a terminal and, for the last item, a real API key.
+
+1. Start with no workspace (`--workspace` omitted, no remembered path): a task is refused until a valid directory is entered, and a missing path or a file is rejected with a message and a new prompt.
+2. Restart: the last directory is offered with `[Enter]`, and a new path can be typed instead.
+3. `/config`: each category shows its mode and source (`default`, `global`, `workspace`). Change `shell` to `deny` at workspace scope and check `<workspace>/.agent/config.json`. Another workspace still shows the global value.
+4. With a real model: ask for "create a small Python package with a function and a test". The agent should create a `src` or package directory and a `tests/` directory, run the tests, and print a change summary. `<workspace>/.agent/changelog.log` should list each write and edit with a reason and no shell command text.
+
 ## Configuration
 
 Type `/config` in the CLI to view and edit each operation category (`read`, `write`, `edit`, `shell`) as `allow`, `ask` or `deny`, and to choose where the change is saved.

@@ -21,7 +21,12 @@ HELP = "Commands: /config, /workspace, /help, /exit. Any other line is a task."
 
 
 def _emit(kind: str, text: str) -> None:
-    print(text if kind in ("assistant", "info") else f"[{kind}] {text}")
+    if kind in ("assistant", "info", "tool"):
+        print(text)
+    elif kind == "result":
+        print(f"   {text}")
+    else:
+        print(f"[{kind}] {text}")
 
 
 def _confirm(prompt: str) -> str:
