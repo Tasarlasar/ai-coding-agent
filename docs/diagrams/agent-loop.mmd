@@ -1,0 +1,36 @@
+sequenceDiagram
+    actor User
+    participant CLI as cli.py
+    participant AL as AgentLoop
+    participant Ctx as ContextManager
+    participant Prov as Provider (LiteLLM)
+    participant Gate as PermissionGate
+    participant Tool as Tool + Workspace
+    participant Log as ChangeLog
+    User->>CLI: task line
+    CLI->>AL: run_task(request)
+    AL->>Log: begin_task
+    AL->>Ctx: start_task(system prompt, project summary, request)
+    loop until no tool calls, step limit, error or Ctrl-C
+        AL->>Ctx: prepare(messages)
+        AL->>Prov: complete(messages, tool schemas)
+        Prov-->>AL: text and tool calls, token usage
+        alt reply has no tool calls
+            AL-->>CLI: outcome done
+        else each tool call
+            AL->>AL: validate arguments against schema
+            AL->>Gate: check(tool, args)
+            alt denied, declined or path escapes
+                Gate-->>AL: ERROR text
+            else allowed
+                Gate-->>AL: ok (may prompt user y/n/a)
+                AL->>Tool: run(args)
+                Tool-->>AL: ToolResult
+                AL->>Log: record write/edit, verification
+            end
+            AL->>Ctx: add_tool_result (truncated)
+        end
+    end
+    AL->>Log: end_task(outcome)
+    Log-->>CLI: summary lines
+    CLI-->>User: change summary

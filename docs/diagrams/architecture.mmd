@@ -1,0 +1,15 @@
+flowchart LR
+    U([User]) --> CLI["cli.py<br/>workspace prompt, /config, task prompt"]
+    CLI --> CFG["config.py<br/>global + workspace settings, credentials"]
+    CLI --> LOOP["loop.py<br/>AgentLoop"]
+    LOOP --> CTX["context.py<br/>truncate, stub, summarize"]
+    LOOP --> PROV["providers/<br/>Provider interface"]
+    CTX -. summary call .-> PROV
+    PROV --> LLM[("LiteLLM<br/>any model or --api-base endpoint")]
+    LOOP --> GATE["permissions.py<br/>allow / ask / deny"]
+    GATE --> TOOLS["tools.py<br/>read, write, edit, list, search, shell"]
+    TOOLS --> WS["workspace.py<br/>realpath confinement"]
+    WS --> FS[("Workspace directory")]
+    LOOP --> LOG["changelog.py<br/>.agent/changelog.log"]
+    TOOLS -. secret-named env vars removed .-> SEC["secrets.py"]
+    PROV -. error scrubbing .-> SEC

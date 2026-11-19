@@ -1,0 +1,21 @@
+flowchart TD
+    A["Tool call from model"] --> B{"Arguments valid<br/>for the JSON schema?"}
+    B -- no --> E1["ERROR: bad arguments"]
+    B -- yes --> C{"Path tool?"}
+    C -- yes --> D{"Path resolves inside<br/>the workspace?"}
+    D -- no --> E2["ERROR: path escapes workspace<br/>(no prompt shown)"]
+    D -- yes --> F["Look up category mode"]
+    C -- "no (run_shell)" --> F
+    F --> G{"Effective mode"}
+    G -- deny --> E3["ERROR: denied by permission settings"]
+    G -- allow --> R["Run tool"]
+    G -- ask --> H{"Category already<br/>'always' this session?"}
+    H -- yes --> R
+    H -- no --> I{"Prompt user [y/n/a]"}
+    I -- "y" --> R
+    I -- "a" --> J["Remember category for session"] --> R
+    I -- "n or EOF" --> E4["ERROR: user declined"]
+    subgraph Effective mode precedence
+        direction LR
+        P1["built-in default"] --> P2["global config.json"] --> P3["workspace .agent/config.json"] --> P4["session override"]
+    end

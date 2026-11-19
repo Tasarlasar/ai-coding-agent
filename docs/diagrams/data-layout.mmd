@@ -1,0 +1,18 @@
+flowchart LR
+    subgraph G["Global config dir (~/.config/agent-cli, or AGENT_CONFIG_DIR)"]
+        GC["config.json<br/>model, api_base, permissions, limits"]
+        CR["credentials.json<br/>api_key, mode 0600"]
+        ST["state.json<br/>last_workspace"]
+    end
+    subgraph W["Workspace directory (user-selected, required)"]
+        SRC["project files<br/>written by the agent"]
+        subgraph A[".agent/ (runtime-owned)"]
+            WC["config.json<br/>permissions and limits only"]
+            CL["changelog.log<br/>one line per write/edit + task summary"]
+        end
+    end
+    CLI["CLI"] --> G
+    CLI --> W
+    TOOLS["File tools"] --> SRC
+    TOOLS -. write/edit refused .-> A
+    RT["Runtime (ChangeLog, config menu)"] --> A

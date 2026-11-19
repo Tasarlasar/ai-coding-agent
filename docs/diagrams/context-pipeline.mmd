@@ -1,0 +1,17 @@
+flowchart TD
+    S["New task: system prompt + project summary + request<br/>(no messages from earlier tasks)"] --> L["Step n of the loop"]
+    T["Tool runs"] --> T1["Per-stream cap: output_limit_chars<br/>head 60% + tail 40% + omitted note"]
+    T1 --> T2["add_tool_result backstop:<br/>2 x limit + 200 chars"]
+    T2 --> L
+    L --> P1["prepare(): stub old tool results<br/>older than last 6 messages and over 500 chars"]
+    P1 --> P2{"max(chars/4 estimate, last reported usage)<br/>above 80% of context_budget_tokens?"}
+    P2 -- no --> SEND["Send to provider"]
+    P2 -- yes --> P3{"Inside suppression band<br/>after a recent summary?"}
+    P3 -- yes --> SEND
+    P3 -- no --> P4{"At least 4 old messages<br/>outside last 8?"}
+    P4 -- no --> W["Warn if still over budget"] --> SEND
+    P4 -- yes --> SM["Summary call (no tools):<br/>Files touched, Decisions, Open items, max 400 words"]
+    SM -- provider error --> FB["Fallback note:<br/>file paths from write/edit calls"]
+    SM --> NEW["History = system + first user message<br/>+ summary note + last 8 messages"]
+    FB --> NEW
+    NEW --> SEND
