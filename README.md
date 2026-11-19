@@ -4,6 +4,8 @@ A personal AI coding agent for the terminal, written in Python. It runs the basi
 
 The design is inspired by Claude Code, GitHub Copilot and Cursor Agent, and follows a Kiro-style task flow: understand, inspect, plan, execute, verify, report.
 
+**Video:** _add your explainer video link here_
+
 ## Features
 
 - **Bring your own key, any model.** LiteLLM is the first backend, behind a small `Provider` interface. Local and OpenAI-compatible servers work through `--api-base`.
