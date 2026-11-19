@@ -27,6 +27,7 @@ def truncate_output(text: str, limit: int) -> str:
 
 
 def estimate_tokens(messages: list[dict]) -> int:
+    """Roughly estimate the token count of messages (4 characters per token)."""
     return sum(len(json.dumps(m, default=str)) for m in messages) // 4
 
 
@@ -39,6 +40,7 @@ def _tool_names(messages: list[dict]) -> dict[str, str]:
 
 
 class ContextManager:
+    """Keeps each task's history within budget by stubbing old results and summarizing."""
     def __init__(self, provider: Provider, settings, warn: Callable[[str], None] | None = None):
         self.provider = provider
         self.settings = settings
@@ -61,15 +63,18 @@ class ContextManager:
     def add_tool_result(self, messages: list[dict], tool_call_id: str, content: str) -> None:
         # Tools already cut each output stream to output_limit_chars; this backstop allows two
         # streams (stdout and stderr) plus headers, so it never cuts a stream a second time.
+        """Append a tool result message, truncating it to a backstop size."""
         limit = self.settings.output_limit_chars * 2 + 200
         messages.append({"role": "tool", "tool_call_id": tool_call_id,
                          "content": truncate_output(content, limit)})
 
     def note_usage(self, total_tokens: int | None) -> None:
+        """Record the token total the provider reported for the last call."""
         self.last_usage = total_tokens
 
     # ---- per-step preparation ----
     def prepare(self, messages: list[dict]) -> list[dict]:
+        """Return the history to send next, compacted if it nears the token budget."""
         messages = self._stub_old_results(messages)
         budget = self.settings.context_budget_tokens
         estimate = max(estimate_tokens(messages), self.last_usage or 0)

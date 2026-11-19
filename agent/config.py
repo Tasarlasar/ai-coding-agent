@@ -29,11 +29,13 @@ UNSET = object()
 
 
 class ConfigError(Exception):
+    """Raised when a setting cannot be saved or is invalid."""
     pass
 
 
 @dataclass(frozen=True)
 class Settings:
+    """Effective settings for one run, after merging defaults, global, workspace and flags."""
     model: str | None
     api_base: str | None
     permissions: Mapping[str, str]
@@ -45,6 +47,7 @@ class Settings:
 
 @dataclass(frozen=True)
 class LoadedSettings:
+    """Settings plus where each value came from, warnings and loosened permissions."""
     settings: Settings
     sources: Mapping[str, str]
     warnings: tuple[str, ...]
@@ -55,6 +58,7 @@ class LoadedSettings:
 # ---- paths -----------------------------------------------------------------
 
 def global_dir() -> Path:
+    """Return the global config directory."""
     override = os.environ.get("AGENT_CONFIG_DIR")
     if override:
         return Path(override)
@@ -65,14 +69,17 @@ def global_dir() -> Path:
 
 
 def global_config_path() -> Path:
+    """Return the path of the global config file."""
     return global_dir() / "config.json"
 
 
 def credentials_path() -> Path:
+    """Return the path of the credentials file."""
     return global_dir() / "credentials.json"
 
 
 def workspace_config_path(workspace: Path) -> Path:
+    """Return the path of the per-workspace config file."""
     return Path(workspace) / ".agent" / "config.json"
 
 
@@ -156,6 +163,7 @@ def _clean(data: dict, scope: str, path: Path, warnings: list[str]) -> dict:
 # ---- load ------------------------------------------------------------------
 
 def load_settings(workspace: Path | None, overrides: Mapping[str, Any] | None = None) -> LoadedSettings:
+    """Merge defaults, global config, workspace config and overrides into LoadedSettings."""
     warnings: list[str] = []
     gpath = global_config_path()
     gdata, w = _read_json(gpath)
@@ -204,6 +212,7 @@ def load_settings(workspace: Path | None, overrides: Mapping[str, Any] | None = 
 
 
 def loosened_categories(loaded: LoadedSettings) -> list[str]:
+    """List the categories where the workspace config is less strict than the global mode."""
     return [c for c in CATEGORIES if c in loaded.loosened]
 
 
@@ -228,6 +237,7 @@ def _atomic_write(path: Path, text: str, mode: int | None = None) -> None:
 
 
 def save_setting(scope: str, key_path: str, value: Any, workspace: Path | None) -> None:
+    """Save one setting to the global or workspace file; pass UNSET to remove it."""
     parts = key_path.split(".")
     top = parts[0]
     if scope == "workspace" and top in GLOBAL_ONLY:
@@ -268,6 +278,7 @@ def save_setting(scope: str, key_path: str, value: Any, workspace: Path | None) 
 # ---- credentials -----------------------------------------------------------
 
 def resolve_api_key(env: Mapping[str, str]) -> str | None:
+    """Return the API key from AGENT_API_KEY or the credentials file, else None."""
     key = (env.get("AGENT_API_KEY") or "").strip()
     if key:
         return key
@@ -279,6 +290,7 @@ def resolve_api_key(env: Mapping[str, str]) -> str | None:
 
 
 def save_api_key(key: str) -> None:
+    """Store the API key in the credentials file with mode 0600."""
     key = key.strip()
     if not key:
         raise ConfigError("empty API key")
@@ -286,6 +298,7 @@ def save_api_key(key: str) -> None:
 
 
 def credentials_warning() -> str | None:
+    """Return a warning if the credentials file permissions are too open, else None."""
     if sys.platform == "win32":
         return None
     path = credentials_path()
@@ -301,11 +314,13 @@ def credentials_warning() -> str | None:
 # ---- remembered state ------------------------------------------------------
 
 def load_state() -> dict:
+    """Load remembered state such as the last workspace."""
     data, _ = _read_json(global_dir() / "state.json")
     return data or {}
 
 
 def save_last_workspace(path: str) -> None:
+    """Remember the last used workspace path."""
     state = load_state()
     state["last_workspace"] = path
     _atomic_write(global_dir() / "state.json", json.dumps(state))

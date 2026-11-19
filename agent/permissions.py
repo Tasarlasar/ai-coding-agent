@@ -13,10 +13,12 @@ _PATH_TOOLS = {"read_file", "write_file", "edit_file", "list_dir", "search"}
 
 
 def resolve_mode(category: str, settings: Settings) -> str:
+    """Return the permission mode (allow, ask or deny) for a category."""
     return settings.permissions.get(category, "ask")
 
 
 class PermissionGate:
+    """Decides whether a tool call may run, prompting the user when the mode is ask."""
     def __init__(self, settings: Settings, confirm: Callable[[str], str],
                  session_allow: set[str], workspace: Workspace):
         self.settings = settings
@@ -25,6 +27,7 @@ class PermissionGate:
         self.workspace = workspace
 
     def check(self, tool: Tool, args: dict) -> tuple[bool, str]:
+        """Return (allowed, error message) for a tool call."""
         shown = ""
         verb = tool.name
         if tool.name in _PATH_TOOLS:

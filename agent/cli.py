@@ -93,10 +93,12 @@ class Session:
         self.honor_loosening: dict[str, bool] = {}
 
     def overrides(self) -> dict:
+        """Return the command line flags that override saved settings."""
         return {k: v for k, v in (("model", self.args.model), ("api_base", self.args.api_base),
                                   ("max_steps", self.args.max_steps)) if v is not None}
 
     def load(self) -> LoadedSettings:
+        """Load settings, asking once per workspace whether to honor loosened permissions."""
         loaded = config.load_settings(self.workspace.root, self.overrides())
         key = str(self.workspace.root)
         loose = config.loosened_categories(loaded)
@@ -110,6 +112,7 @@ class Session:
         return loaded
 
     def print_warnings(self, loaded: LoadedSettings) -> None:
+        """Print config and credential warnings."""
         for w in loaded.warnings:
             print(f"warning: {w}")
         cw = config.credentials_warning()
@@ -117,6 +120,7 @@ class Session:
             print(f"warning: {cw}")
 
     def change_workspace(self, workspace: Workspace) -> None:
+        """Switch to another workspace and reset the session-wide 'always' grants."""
         self.workspace = workspace
         self.session_allow = set()
 
@@ -158,6 +162,7 @@ def _menu_rows(loaded: LoadedSettings) -> list[str]:
 
 
 def config_menu(session: Session) -> None:
+    """Interactive /config menu for permissions, model and API key."""
     ws = session.workspace.root
     while True:
         loaded = config.load_settings(ws, session.overrides())
@@ -213,6 +218,7 @@ def _edit_permission(loaded: LoadedSettings, cat: str, ws) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point: parse flags, select the workspace, then run the prompt loop. Returns an exit code."""
     parser = argparse.ArgumentParser(prog="agent", description="Personal AI coding agent")
     parser.add_argument("--workspace", help="workspace directory the agent may work in")
     parser.add_argument("--model", help="model name, e.g. gpt-4o")

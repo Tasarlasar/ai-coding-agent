@@ -25,6 +25,7 @@ def _reason(reason: str | None) -> str:
 
 
 class ChangeLog:
+    """Appends compact task entries to `<workspace>/.agent/changelog.log`."""
     def __init__(self, workspace: Workspace):
         self.workspace = workspace
         self.path = workspace.root / ".agent" / "changelog.log"
@@ -45,6 +46,7 @@ class ChangeLog:
             self.error = self.error or f"change log not written: {exc.strerror or exc}"
 
     def pop_error(self) -> str | None:
+        """Return the last write error, if any, and clear it."""
         err, self.error = self.error, None
         return err
 
@@ -53,6 +55,7 @@ class ChangeLog:
         return datetime.now().isoformat(timespec="seconds")
 
     def begin_task(self, request: str) -> None:
+        """Start a task entry and reset the per-task change and verification lists."""
         base = self._now()
         if base == self._last_base:
             self._dupes += 1
@@ -64,6 +67,7 @@ class ChangeLog:
         self._append(f"# task {task_id} | {' '.join(_field(request).split())[:MAX_REQUEST]}")
 
     def record(self, action: str, target: str, reason: str | None) -> None:
+        """Log one successful change: action, target path and a one-line reason."""
         action, target, reason = _field(action), _field(target), _reason(reason)
         self._changes.append((action, target, reason))
         self._append(f"{self._now()} | {action} | {target} | {reason}")
@@ -73,6 +77,7 @@ class ChangeLog:
         self._verifications.append((command, exit_code))
 
     def end_task(self, final_text: str | None, outcome: str) -> list[str]:
+        """Write the end-of-task summary to the log and return the terminal summary lines."""
         task_id = self._task_id or self._now()
         files: dict[str, str] = {}
         for _, target, reason in self._changes:
@@ -117,6 +122,7 @@ class ChangeLog:
         return [f"{started[t]} ({ended.get(t, 'unfinished')})" for t in order[-count:]]
 
     def project_summary(self) -> str:
+        """Build the short project summary (top-level entries, recent tasks) for a new task."""
         entries = self.workspace.top_entries()
         parts = [f"Workspace: {self.workspace.root.name}",
                  "Top-level: " + (", ".join(entries) if entries else "(empty)")]

@@ -17,12 +17,14 @@ from agent.tools import Tool, ToolContext, ToolResult, validate_args
 
 @dataclass
 class TaskResult:
+    """Outcome of one task."""
     outcome: str  # done | step_limit | provider_error | interrupted | internal_error
     final_text: str | None
     steps: int
 
 
 class AgentLoop:
+    """Runs the model/tool loop for one task at a time."""
     def __init__(self, provider: Provider, tools: dict[str, Tool], workspace: Workspace,
                  settings: Settings, gate: PermissionGate, context: ContextManager,
                  changelog: ChangeLog, emit: Callable[[str, str], None]):
@@ -39,6 +41,7 @@ class AgentLoop:
         self.schemas = [t.schema for t in tools.values()]
 
     def run_task(self, request: str) -> TaskResult:
+        """Run one task to completion, a limit or an error, and return a TaskResult."""
         summary = self.changelog.project_summary()  # before begin_task, so it excludes this task
         self.changelog.begin_task(request)
         messages = self.context.start_task(SYSTEM_PROMPT, summary, request)

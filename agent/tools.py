@@ -23,25 +23,30 @@ SKIP_DIRS = {".git", ".agent", ".venv", "node_modules"}
 
 @dataclass
 class ToolResult:
+    """Result of a tool call: success flag and text content."""
     ok: bool
     content: str
 
 
 @dataclass
 class ToolContext:
+    """What a tool needs to run: the workspace and the settings."""
     workspace: Workspace
     settings: Any = None
 
     @property
     def root(self) -> Path:
+        """Return the workspace root path."""
         return self.workspace.root
 
     def setting(self, name: str, default):
+        """Return a setting by name, or the default if it is missing."""
         return getattr(self.settings, name, default)
 
 
 @dataclass
 class Tool:
+    """A tool: name, permission category, JSON schema and implementation."""
     name: str
     category: str
     schema: dict
@@ -95,6 +100,7 @@ def _guarded(fn):
 
 
 def is_agent_dir_path(root: Path, real: Path) -> bool:
+    """Return True if the path is inside the workspace's .agent directory."""
     agent_dir = root / ".agent"
 
     def norm(x: Path) -> str:
@@ -341,6 +347,7 @@ def _schema(name: str, desc: str, props: dict, required: list[str]) -> dict:
 
 
 def build_tools() -> dict[str, Tool]:
+    """Return the tool registry keyed by tool name."""
     tools = [
         Tool("read_file", "read", _schema(
             "read_file", "Read a text file. Output lines are prefixed with 'N<TAB>' (not part of the file).",

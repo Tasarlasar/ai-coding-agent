@@ -6,19 +6,23 @@ from pathlib import Path
 
 
 class WorkspaceError(Exception):
+    """Raised for an invalid workspace directory."""
     pass
 
 
 class PathEscapeError(WorkspaceError):
+    """Raised when a path resolves outside the workspace."""
     pass
 
 
 class Workspace:
+    """A selected directory that file tools are confined to."""
     def __init__(self, root: Path):
         self.root = root
 
     @staticmethod
     def validate(path_str: str) -> "Workspace":
+        """Build a Workspace from a user-supplied path, or raise WorkspaceError."""
         if not path_str or not path_str.strip():
             raise WorkspaceError("no directory given")
         real = Path(os.path.realpath(os.path.expanduser(path_str.strip())))
@@ -41,12 +45,14 @@ class Workspace:
         raise PathEscapeError(f"path escapes workspace: {rel}")
 
     def rel(self, p: Path) -> str:
+        """Return a path relative to the root, in POSIX form."""
         real = Path(os.path.realpath(p))
         if real == self.root:
             return "."
         return real.relative_to(self.root).as_posix()
 
     def top_entries(self, limit: int = 30) -> list[str]:
+        """List top-level entries (directories end with /), skipping tool and VCS directories."""
         skip = {".git", ".agent", ".venv", "node_modules", "__pycache__"}
         try:
             children = sorted(self.root.iterdir(), key=lambda c: c.name)

@@ -29,6 +29,7 @@ def map_exception(exc: Exception, model: str) -> ProviderError:
 
 
 class LiteLLMProvider:
+    """Provider backed by LiteLLM, for any model or OpenAI-compatible endpoint."""
     def __init__(self, model: str, api_key: str | None = None,
                  api_base: str | None = None, timeout: float = 120):
         self.model = model
@@ -37,6 +38,7 @@ class LiteLLMProvider:
         self.timeout = timeout
 
     def complete(self, messages: list[dict], tools: list[dict]) -> Response:
+        """Call the model through LiteLLM and map failures to a scrubbed ProviderError."""
         extra: dict = {}
         if tools:
             extra["tools"] = tools
@@ -71,6 +73,7 @@ class LiteLLMProvider:
 
     @staticmethod
     def preflight(model: str | None, api_key: str | None, api_base: str | None) -> str | None:
+        """Return a problem description if no credentials or api_base are available, else None."""
         if api_key or api_base:
             return None
         try:

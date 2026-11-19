@@ -7,6 +7,7 @@ from typing import Protocol
 
 @dataclass
 class ToolCall:
+    """A tool call requested by the model."""
     id: str
     name: str
     arguments: dict  # {"__parse_error": raw} when the raw string is not a JSON object
@@ -15,6 +16,7 @@ class ToolCall:
 
 @dataclass
 class Response:
+    """A model reply: optional text, tool calls and token usage."""
     text: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage_total_tokens: int | None = None
@@ -25,4 +27,8 @@ class ProviderError(Exception):
 
 
 class Provider(Protocol):
-    def complete(self, messages: list[dict], tools: list[dict]) -> Response: ...
+    """Anything that can turn messages and tool schemas into a Response."""
+
+    def complete(self, messages: list[dict], tools: list[dict]) -> Response:
+        """Send messages and tool schemas to the model and return its reply."""
+        ...
