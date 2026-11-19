@@ -33,7 +33,7 @@ Alternatives: lock to one provider, use a unified library (LiteLLM), or write on
 | Effort | Lowest | High (frontend work) | Highest |
 | Filesystem and shell access | Native | Needs a backend | Via the editor API |
 
-**Choice: CLI.** It matches Claude Code and Kiro's agent flow. The core stays separate from the interface so a UI can be added later.
+**Choice: CLI.** It matches Claude Code and Kiro's agent flow. The core stays separate from the interface so a UI can be added later. The CLI uses plain `input()` prompts; no `rich` or `prompt_toolkit` dependency was added.
 
 ## 4. Agent loop: hand-written, native tool calling
 
@@ -96,4 +96,4 @@ The agent works through a task as a visible sequence: understand the request, in
 
 ## 11. Build order
 
-Thin vertical slices, each committed: loop with one tool, remaining tools, workspace selection and path safety, permissions and config menu, context management, change log, then extras (streaming, sub-agents). Alternative of designing everything first risks unneeded abstraction and delays a working system.
+Thin vertical slices, each committed: loop with one tool, remaining tools, workspace selection and path safety, permissions and config menu, context management, change log, then extras. Streaming output and sub-agents were considered and are not built (see the README roadmap). Alternative of designing everything first risks unneeded abstraction and delays a working system.
