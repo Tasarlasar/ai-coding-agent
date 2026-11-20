@@ -1,7 +1,7 @@
 Last login: Mon Nov  9 19:35:40 on ttys000
 /Users/home/College/run-agent-demo.command ; exit;
 /Users/home/.zshrc:1: command not found: rbenv
-(base) home@ANs-MacBook-Air-5 ~ % /Users/home/College/run-agent-demo.command ; exit;
+user@host ~ % /Users/home/College/run-agent-demo.command ; exit;
 Agent PoC. Model: claude-sonnet-4.5 via local gateway. Type /help for commands, /exit to quit.
 Workspace: /Users/home/College/agent-demo-workspace
 Commands: /config, /workspace, /help, /exit. Any other line is a task.
